@@ -1,0 +1,2658 @@
+############################################################
+# Split-half exploratory behavioral correlation analysis
+#
+# MDD-main-effect connectivity clusters
+#
+# Discovery:
+#   Spearman correlation, two-tailed, uncorrected p < .05
+#
+# Replication:
+#   Only correlations significant in discovery are tested
+#
+# PRS analysis:
+#   HighPRS + LowPRS collapsed within each MDD group
+#
+# Six collapsed groups x two sexes:
+#   females_CTL
+#   females_cMDD
+#   females_rMDD
+#   males_CTL
+#   males_cMDD
+#   males_rMDD
+#
+# Two connectivity definitions: big and small
+############################################################
+
+
+############################
+# 1. DIRECTORIES
+############################
+
+BASE_DIR <- "/flush/common/UKbiobank/fMRI_dset/statistics_new/2026_behave_split_analysis"
+
+GROUP_DIR <- file.path(BASE_DIR, "groups")
+CON_DIR   <- file.path(BASE_DIR, "DMN_LN_CON")
+BEH_DIR   <- file.path(BASE_DIR, "BEHAVE_EXTENDED")
+
+RESULT_DIR <- file.path(BASE_DIR, "RESULTS_EXTENDED")
+
+if (!dir.exists(RESULT_DIR)) {
+    dir.create(RESULT_DIR, recursive = TRUE)
+}
+
+
+############################
+# 2. SETTINGS
+############################
+
+# Connectivity definitions to analyse
+CON_TYPES <- c("big", "small")
+
+# Discovery threshold
+DISCOVERY_P <- 0.05
+
+# Replication threshold
+REPLICATION_P <- 0.05
+
+
+############################
+# 3. BEHAVIOR FILES
+############################
+
+behavior_files <- list.files(
+    BEH_DIR,
+    pattern = "\\.csv$",
+    full.names = TRUE
+)
+
+cat("\nBehavior files found:\n")
+
+for (f in behavior_files) {
+    cat("  ", basename(f), "\n")
+}
+
+if (length(behavior_files) == 0) {
+    stop("No behavioral CSV files found in BEHAVE directory.")
+}
+
+
+############################
+# 4. READ BEHAVIOR DATA
+############################
+
+behavior_data <- list()
+
+for (f in behavior_files) {
+
+    beh_name <- tools::file_path_sans_ext(basename(f))
+
+    dat <- read.csv(
+        f,
+        stringsAsFactors = FALSE
+    )
+
+    # Make sure ID is character
+    if (!"eid" %in% names(dat)) {
+        stop(
+            "Behavior file does not contain 'eid': ",
+            f
+        )
+    }
+
+    dat$eid <- as.character(dat$eid)
+
+
+    ############################
+    # SPECIAL CASE: NEUROTICISM
+    ############################
+
+    if (beh_name == "neuroticism") {
+
+        # Count the number of "1" responses across
+        # behave1 ... behave12 for each subject.
+        #
+        # -1 and -3 are therefore automatically excluded
+        # because only values equal to 1 are counted.
+
+        behave_columns <- grep(
+            "^behave[0-9]+$",
+            names(dat),
+            value = TRUE
+        )
+
+        if (length(behave_columns) == 0) {
+            stop(
+                "Neuroticism file does not contain behave1 ... behave12: ",
+                f
+            )
+        }
+
+        dat$neuroticism <- apply(
+            dat[, behave_columns, drop = FALSE],
+            1,
+            function(x) {
+                sum(x == 1, na.rm = TRUE)
+            }
+        )
+
+        behavior_data[[beh_name]] <- dat[, c("eid", beh_name)]
+
+        cat(
+            "Loaded behavior:",
+            beh_name,
+            "(counted number of 1s)",
+            "N =",
+            nrow(dat),
+            "\n"
+        )
+
+
+    ############################
+    # ALL OTHER BEHAVIORS
+    ############################
+
+    } else {
+
+        ####################################################
+        # All recreated behavior files use:
+        #
+        #   eid,value
+        ####################################################
+
+        if (!"value" %in% names(dat)) {
+            stop(
+                "Behavior file does not contain 'value': ",
+                f
+            )
+        }
+
+        value_column <- "value"
+
+
+        ############################
+        # CONVERT TO NUMERIC
+        ############################
+
+        dat[[value_column]] <- as.numeric(
+            dat[[value_column]]
+        )
+
+
+        ############################
+        # REMOVE UKB MISSING CODES
+        ############################
+
+        # UK Biobank:
+        # Negative values are treated as missing.
+        #
+        # IMPORTANT:
+        # Zeroes are retained.
+
+        dat[[value_column]][
+            !is.na(dat[[value_column]]) &
+            dat[[value_column]] < 0
+        ] <- NA
+
+
+        ############################
+        # SPECIAL CASE: 20018
+        ############################
+
+        if (beh_name == "field_20018") {
+
+            # Swap:
+            #   1 -> 2
+            #   2 -> 1
+            #
+            # Use indices so the replacement is simultaneous
+            # and does not accidentally undo itself.
+
+            idx1 <- !is.na(dat[[value_column]]) &
+                    dat[[value_column]] == 1
+
+            idx2 <- !is.na(dat[[value_column]]) &
+                    dat[[value_column]] == 2
+
+            dat[[value_column]][idx1] <- 2
+            dat[[value_column]][idx2] <- 1
+
+            cat(
+                "Loaded behavior:",
+                beh_name,
+                "(removed negative values; swapped 1 <-> 2)",
+                "N =",
+                nrow(dat),
+                "\n"
+            )
+
+
+        ############################
+        # SPECIAL CASE: REACTION TIME
+        ############################
+
+        } else if (beh_name == "reacton_time") {
+
+            # Remove reaction times <= 100 ms.
+            # Keep only values > 100 ms.
+
+            dat[[value_column]][
+                !is.na(dat[[value_column]]) &
+                dat[[value_column]] <= 100
+            ] <- NA
+
+            cat(
+                "Loaded behavior:",
+                beh_name,
+                "(removed negative values and reaction times <= 100 ms)",
+                "N =",
+                nrow(dat),
+                "\n"
+            )
+
+
+        ############################
+        # ALL OTHER VARIABLES
+        ############################
+
+        } else {
+
+            cat(
+                "Loaded behavior:",
+                beh_name,
+                "(removed negative values; zeroes retained)",
+                "N =",
+                nrow(dat),
+                "\n"
+            )
+        }
+
+
+        ############################
+        # RENAME BEHAVIOR VARIABLE
+        ############################
+
+        names(dat)[
+            names(dat) == value_column
+        ] <- beh_name
+
+        behavior_data[[beh_name]] <-
+            dat[, c("eid", beh_name)]
+    }
+}
+############################
+# 5. COMBINE ALL BEHAVIORS
+############################
+
+behave_all <- behavior_data[[1]]
+
+if (length(behavior_data) > 1) {
+
+    for (i in 2:length(behavior_data)) {
+
+        behave_all <- merge(
+            behave_all,
+            behavior_data[[i]],
+            by = "eid",
+            all = TRUE
+        )
+    }
+}
+
+
+cat(
+    "\nCombined behavioral table:",
+    nrow(behave_all),
+    "subjects x",
+    ncol(behave_all),
+    "columns\n"
+)
+
+
+behavior_names <- setdiff(
+    names(behave_all),
+    "eid"
+)
+
+cat("\nBehavioral variables:\n")
+print(behavior_names)
+
+
+############################
+# 6. FUNCTION TO READ
+#    CONNECTIVITY DATA
+############################
+
+get_connectivity_file <- function(sex, con_type) {
+
+    if (sex == "female") {
+
+        f <- file.path(
+            CON_DIR,
+            paste0(
+                "clust_table_female_n5_2_clusternum_merge_",
+                con_type,
+                ".csv"
+            )
+        )
+
+    } else {
+
+        f <- file.path(
+            CON_DIR,
+            paste0(
+                "clust_table_male_n5_2_clusternum_merge_",
+                con_type,
+                ".csv"
+            )
+        )
+    }
+
+    if (!file.exists(f)) {
+        stop("Connectivity file not found: ", f)
+    }
+
+    dat <- read.csv(
+        f,
+        stringsAsFactors = FALSE
+    )
+
+    dat$SUBJ <- as.character(dat$SUBJ)
+
+    dat
+}
+
+
+############################
+# 7. FUNCTION TO READ
+#    ONE GROUP
+############################
+
+get_group_data <- function(group_file,
+                           connectivity,
+                           behave_all) {
+
+    groups <- read.csv(
+        group_file,
+        stringsAsFactors = FALSE
+    )
+
+    groups$SUBJ <- as.character(groups$SUBJ)
+
+    # Match connectivity
+    dat <- merge(
+        groups,
+        connectivity[, c("SUBJ", "CON")],
+        by = "SUBJ",
+        all.x = TRUE
+    )
+
+    # Match behaviors
+    dat <- merge(
+        dat,
+        behave_all,
+        by.x = "SUBJ",
+        by.y = "eid",
+        all.x = TRUE
+    )
+
+    dat
+}
+
+
+############################
+# 8. SPEARMAN FUNCTION
+############################
+
+run_spearman <- function(dat, behavior) {
+
+    x <- dat$CON
+    y <- dat[[behavior]]
+
+    # Keep complete pairs only
+    keep <- complete.cases(x, y)
+
+    x <- x[keep]
+    y <- y[keep]
+
+    n <- length(x)
+
+    if (n < 4) {
+
+        return(
+            data.frame(
+                N = n,
+                rho = NA_real_,
+                p = NA_real_
+            )
+        )
+    }
+
+    test <- suppressWarnings(
+        cor.test(
+            x,
+            y,
+            method = "spearman",
+            exact = FALSE,
+            alternative = "two.sided"
+        )
+    )
+
+    data.frame(
+        N = n,
+        rho = unname(test$estimate),
+        p = test$p.value
+    )
+}
+
+
+############################################################
+# 9. ORIGINAL PRS-STRATIFIED ANALYSIS
+#
+# DISABLED
+#
+# The ORIGINAL code is retained below.
+#
+# Wrapped in if (FALSE), so the six separate
+# HighPRS/LowPRS group analyses are NOT run.
+#
+# Therefore they do not create/update their individual
+# result CSV files.
+############################################################
+
+if (FALSE) {
+
+
+############################
+# 9. MAIN ANALYSIS
+############################
+
+all_discovery_results <- list()
+all_replication_results <- list()
+
+result_counter <- 1
+
+
+for (con_type in CON_TYPES) {
+
+    cat("\n\n########################################\n")
+    cat("CONNECTIVITY TYPE:", con_type, "\n")
+    cat("########################################\n")
+
+
+    ############################
+    # CONNECTIVITY
+    ############################
+
+    female_con <- get_connectivity_file(
+        "female",
+        con_type
+    )
+
+    male_con <- get_connectivity_file(
+        "male",
+        con_type
+    )
+
+
+    ############################
+    # ALL _1 GROUP FILES
+    ############################
+
+    group_files <- list.files(
+        GROUP_DIR,
+        pattern = "_1\\.csv$",
+        full.names = TRUE
+    )
+
+    group_files <- sort(group_files)
+
+
+    ############################
+    # LOOP OVER GROUPS
+    ############################
+
+    for (group_file in group_files) {
+
+        file_name <- basename(group_file)
+
+        # Example:
+        # females_HighPRS_cMDD_1.csv
+
+        group_name <- sub(
+            "_1\\.csv$",
+            "",
+            file_name
+        )
+
+
+        if (grepl("^females_", file_name)) {
+
+            sex <- "female"
+            connectivity <- female_con
+
+        } else if (grepl("^males_", file_name)) {
+
+            sex <- "male"
+            connectivity <- male_con
+
+        } else {
+
+            next
+        }
+
+
+        cat("\n\n----------------------------------------\n")
+        cat("Group:", group_name, "\n")
+        cat("Sex:", sex, "\n")
+        cat("Connectivity:", con_type, "\n")
+        cat("----------------------------------------\n")
+
+
+        ############################
+        # DISCOVERY DATA
+        ############################
+
+        discovery_file <- file.path(
+            GROUP_DIR,
+            paste0(group_name, "_1.csv")
+        )
+
+        replication_file <- file.path(
+            GROUP_DIR,
+            paste0(group_name, "_2.csv")
+        )
+
+        if (!file.exists(replication_file)) {
+
+            warning(
+                "Replication file missing for ",
+                group_name
+            )
+
+            next
+        }
+
+
+        discovery_data <- get_group_data(
+            discovery_file,
+            connectivity,
+            behave_all
+        )
+
+        replication_data <- get_group_data(
+            replication_file,
+            connectivity,
+            behave_all
+        )
+
+
+        cat(
+            "Discovery subjects:",
+            nrow(discovery_data),
+            "\n"
+        )
+
+        cat(
+            "Replication subjects:",
+            nrow(replication_data),
+            "\n"
+        )
+
+
+        ############################
+        # CHECK DISCOVERY/REPLICATION SPLIT
+        ############################
+
+        cat("\nEID SPLIT CHECK:\n")
+        cat("Group:", group_name, "\n")
+        cat("Sex:", sex, "\n")
+        cat("Connectivity:", con_type, "\n")
+
+        cat(
+            "Discovery:",
+            nrow(discovery_data),
+            "unique:",
+            length(unique(discovery_data$SUBJ)),
+            "\n"
+        )
+
+        cat(
+            "Replication:",
+            nrow(replication_data),
+            "unique:",
+            length(unique(replication_data$SUBJ)),
+            "\n"
+        )
+
+        overlap <- intersect(
+            discovery_data$SUBJ,
+            replication_data$SUBJ
+        )
+
+        cat(
+            "Overlap:",
+            length(overlap),
+            "\n"
+        )
+
+        if (length(overlap) > 0) {
+
+            print(overlap)
+
+            stop(
+                "DISCOVERY/REPLICATION OVERLAP detected in ",
+                group_name,
+                "!"
+            )
+        }
+
+
+        ############################
+        # DISCOVERY CORRELATIONS
+        ############################
+
+        discovery_group_results <- list()
+
+        for (behavior in behavior_names) {
+
+            result <- run_spearman(
+                discovery_data,
+                behavior
+            )
+
+            result$sex <- sex
+            result$group <- group_name
+            result$connectivity <- con_type
+            result$behavior <- behavior
+
+            result$analysis_type <- "PRS_stratified"
+
+            discovery_group_results[[behavior]] <- result
+
+            cat(
+                "Discovery:",
+                behavior,
+                "rho =",
+                round(result$rho, 3),
+                "p =",
+                signif(result$p, 3),
+                "\n"
+            )
+        }
+
+
+        discovery_group_results <- do.call(
+            rbind,
+            discovery_group_results
+        )
+
+        rownames(discovery_group_results) <- NULL
+
+
+        ############################
+        # SAVE ALL DISCOVERY RESULTS
+        ############################
+
+        discovery_group_results <- discovery_group_results[
+            c(
+                "sex",
+                "analysis_type",
+                "group",
+                "connectivity",
+                "behavior",
+                "N",
+                "rho",
+                "p"
+            )
+        ]
+
+
+        ############################
+        # DISCOVERY SIGNIFICANT
+        ############################
+
+        discovery_sig <- discovery_group_results[
+            !is.na(discovery_group_results$p) &
+            discovery_group_results$p < DISCOVERY_P,
+        ]
+
+
+        cat(
+            "\nDiscovery correlations p <",
+            DISCOVERY_P,
+            ":",
+            nrow(discovery_sig),
+            "\n"
+        )
+
+
+        ############################
+        # REPLICATION
+        ############################
+
+        replication_group_results <- list()
+
+        if (nrow(discovery_sig) > 0) {
+
+            for (i in seq_len(nrow(discovery_sig))) {
+
+                behavior <- discovery_sig$behavior[i]
+
+                rep_result <- run_spearman(
+                    replication_data,
+                    behavior
+                )
+
+                discovery_rho <-
+                    discovery_sig$rho[i]
+
+                replication_rho <-
+                    rep_result$rho
+
+                same_direction <- NA
+
+                if (!is.na(discovery_rho) &&
+                    !is.na(replication_rho)) {
+
+                    same_direction <-
+                        sign(discovery_rho) ==
+                        sign(replication_rho)
+                }
+
+                replicated <- FALSE
+
+                if (!is.na(rep_result$p) &&
+                    !is.na(same_direction)) {
+
+                    replicated <-
+                        same_direction &&
+                        rep_result$p < REPLICATION_P
+                }
+
+                replication_group_results[[i]] <-
+                    data.frame(
+
+                        sex = sex,
+
+                        analysis_type = "PRS_stratified",
+
+                        group = group_name,
+
+                        connectivity = con_type,
+
+                        behavior = behavior,
+
+                        N_discovery =
+                            discovery_sig$N[i],
+
+                        rho_discovery =
+                            discovery_rho,
+
+                        p_discovery =
+                            discovery_sig$p[i],
+
+                        N_replication =
+                            rep_result$N,
+
+                        rho_replication =
+                            rep_result$rho,
+
+                        p_replication =
+                            rep_result$p,
+
+                        same_direction =
+                            same_direction,
+
+                        replicated =
+                            replicated
+                    )
+            }
+
+
+            replication_group_results <- do.call(
+                rbind,
+                replication_group_results
+            )
+
+            rownames(replication_group_results) <- NULL
+
+            replication_group_results <-
+                replication_group_results[
+                    c(
+                        "sex",
+                        "analysis_type",
+                        "group",
+                        "connectivity",
+                        "behavior",
+                        "N_discovery",
+                        "rho_discovery",
+                        "p_discovery",
+                        "N_replication",
+                        "rho_replication",
+                        "p_replication",
+                        "same_direction",
+                        "replicated"
+                    )
+                ]
+
+        } else {
+
+            replication_group_results <-
+                data.frame(
+                    sex = character(),
+                    analysis_type = character(),
+                    group = character(),
+                    connectivity = character(),
+                    behavior = character(),
+                    N_discovery = numeric(),
+                    rho_discovery = numeric(),
+                    p_discovery = numeric(),
+                    N_replication = numeric(),
+                    rho_replication = numeric(),
+                    p_replication = numeric(),
+                    same_direction = logical(),
+                    replicated = logical()
+                )
+        }
+
+
+        ############################
+        # SAVE GROUP RESULTS
+        ############################
+
+        discovery_filename <- paste0(
+            group_name,
+            "_",
+            con_type,
+            "_discovery.csv"
+        )
+
+        replication_filename <- paste0(
+            group_name,
+            "_",
+            con_type,
+            "_replication.csv"
+        )
+
+
+        write.csv(
+            discovery_group_results,
+            file.path(
+                RESULT_DIR,
+                discovery_filename
+            ),
+            row.names = FALSE
+        )
+
+
+        write.csv(
+            replication_group_results,
+            file.path(
+                RESULT_DIR,
+                replication_filename
+            ),
+            row.names = FALSE
+        )
+
+
+        ############################
+        # STORE FOR MASTER TABLES
+        ############################
+
+        all_discovery_results[[result_counter]] <-
+            discovery_group_results
+
+        all_replication_results[[result_counter]] <-
+            replication_group_results
+
+        result_counter <- result_counter + 1
+
+
+        ############################
+        # PRINT REPLICATION RESULTS
+        ############################
+
+        if (nrow(replication_group_results) > 0) {
+
+            cat(
+                "\nREPLICATION RESULTS:\n"
+            )
+
+            print(
+                replication_group_results
+            )
+
+        } else {
+
+            cat(
+                "\nNo discovery correlations passed p < ",
+                DISCOVERY_P,
+                "\n",
+                sep = ""
+            )
+        }
+    }
+}
+
+
+}  # closes if (FALSE)
+
+
+############################################################
+# 9B. COLLAPSED PRS ANALYSIS
+#
+# Collapse HighPRS + LowPRS within each MDD group
+#
+# Resulting groups:
+#   females_CTL
+#   females_cMDD
+#   females_rMDD
+#   males_CTL
+#   males_cMDD
+#   males_rMDD
+#
+# Discovery:
+#   HighPRS_<group>_1 + LowPRS_<group>_1
+#
+# Replication:
+#   HighPRS_<group>_2 + LowPRS_<group>_2
+############################################################
+
+cat("\n\n")
+cat("########################################################\n")
+cat("# COLLAPSED PRS ANALYSIS\n")
+cat("# HighPRS + LowPRS\n")
+cat("########################################################\n")
+
+
+############################
+# INITIALIZE MASTER RESULTS
+############################
+
+# 9A is disabled, so these must be initialized here.
+
+all_discovery_results <- list()
+all_replication_results <- list()
+
+result_counter <- 1
+
+
+############################
+# MDD GROUPS TO COLLAPSE
+############################
+
+MDD_GROUPS <- c(
+    "CTL",
+    "cMDD",
+    "rMDD"
+)
+
+
+############################
+# LOOP OVER CONNECTIVITY
+############################
+
+for (con_type in CON_TYPES) {
+
+    cat("\n\n########################################\n")
+    cat("COLLAPSED PRS - CONNECTIVITY TYPE:", con_type, "\n")
+    cat("########################################\n")
+
+
+    ############################
+    # CONNECTIVITY
+    ############################
+
+    female_con <- get_connectivity_file(
+        "female",
+        con_type
+    )
+
+    male_con <- get_connectivity_file(
+        "male",
+        con_type
+    )
+
+
+    ############################
+    # LOOP OVER SEX
+    ############################
+
+    for (sex in c("female", "male")) {
+
+
+        if (sex == "female") {
+            connectivity <- female_con
+            sex_prefix <- "females"
+        } else {
+            connectivity <- male_con
+            sex_prefix <- "males"
+        }
+
+
+        ############################
+        # LOOP OVER MDD GROUP
+        ############################
+
+        for (mdd_group in MDD_GROUPS) {
+
+
+            cat("\n\n----------------------------------------\n")
+            cat("COLLAPSED GROUP:", sex_prefix, "_", mdd_group, "\n", sep = "")
+            cat("Sex:", sex, "\n")
+            cat("MDD group:", mdd_group, "\n")
+            cat("Connectivity:", con_type, "\n")
+            cat("----------------------------------------\n")
+
+
+            ############################
+            # INPUT FILES
+            ############################
+
+            high_discovery_file <- file.path(
+                GROUP_DIR,
+                paste0(
+                    sex_prefix,
+                    "_HighPRS_",
+                    mdd_group,
+                    "_1.csv"
+                )
+            )
+
+            low_discovery_file <- file.path(
+                GROUP_DIR,
+                paste0(
+                    sex_prefix,
+                    "_LowPRS_",
+                    mdd_group,
+                    "_1.csv"
+                )
+            )
+
+
+            high_replication_file <- file.path(
+                GROUP_DIR,
+                paste0(
+                    sex_prefix,
+                    "_HighPRS_",
+                    mdd_group,
+                    "_2.csv"
+                )
+            )
+
+            low_replication_file <- file.path(
+                GROUP_DIR,
+                paste0(
+                    sex_prefix,
+                    "_LowPRS_",
+                    mdd_group,
+                    "_2.csv"
+                )
+            )
+
+
+            ############################
+            # CHECK FILES
+            ############################
+
+            required_files <- c(
+                high_discovery_file,
+                low_discovery_file,
+                high_replication_file,
+                low_replication_file
+            )
+
+            if (!all(file.exists(required_files))) {
+
+                warning(
+                    "One or more group files missing for ",
+                    sex_prefix,
+                    "_",
+                    mdd_group
+                )
+
+                next
+            }
+
+
+            ############################
+            # READ HIGH/LOW PRS
+            ############################
+
+            high_discovery_data <- get_group_data(
+                high_discovery_file,
+                connectivity,
+                behave_all
+            )
+
+            low_discovery_data <- get_group_data(
+                low_discovery_file,
+                connectivity,
+                behave_all
+            )
+
+            high_replication_data <- get_group_data(
+                high_replication_file,
+                connectivity,
+                behave_all
+            )
+
+            low_replication_data <- get_group_data(
+                low_replication_file,
+                connectivity,
+                behave_all
+            )
+
+
+            ############################
+            # COLLAPSE PRS
+            ############################
+
+            discovery_data <- rbind(
+                high_discovery_data,
+                low_discovery_data
+            )
+
+            replication_data <- rbind(
+                high_replication_data,
+                low_replication_data
+            )
+
+
+            ############################
+            # CHECK FOR DUPLICATE EIDS
+            ############################
+
+            discovery_duplicates <- duplicated(
+                discovery_data$SUBJ
+            )
+
+            replication_duplicates <- duplicated(
+                replication_data$SUBJ
+            )
+
+
+            if (any(discovery_duplicates)) {
+
+                stop(
+                    "Duplicate EIDs found in collapsed discovery group: ",
+                    sex_prefix,
+                    "_",
+                    mdd_group
+                )
+            }
+
+
+            if (any(replication_duplicates)) {
+
+                stop(
+                    "Duplicate EIDs found in collapsed replication group: ",
+                    sex_prefix,
+                    "_",
+                    mdd_group
+                )
+            }
+
+
+            ############################
+            # COLLAPSED GROUP NAME
+            ############################
+
+            group_name <- paste0(
+                sex_prefix,
+                "_",
+                mdd_group
+            )
+
+
+            ############################
+            # SUBJECT COUNTS
+            ############################
+
+            cat(
+                "HighPRS discovery:",
+                nrow(high_discovery_data),
+                "\n"
+            )
+
+            cat(
+                "LowPRS discovery:",
+                nrow(low_discovery_data),
+                "\n"
+            )
+
+            cat(
+                "Collapsed discovery:",
+                nrow(discovery_data),
+                "\n"
+            )
+
+            cat(
+                "HighPRS replication:",
+                nrow(high_replication_data),
+                "\n"
+            )
+
+            cat(
+                "LowPRS replication:",
+                nrow(low_replication_data),
+                "\n"
+            )
+
+            cat(
+                "Collapsed replication:",
+                nrow(replication_data),
+                "\n"
+            )
+
+
+            ############################
+            # CHECK DISCOVERY/REPLICATION
+            # OVERLAP
+            ############################
+
+            cat("\nEID SPLIT CHECK:\n")
+
+            cat(
+                "Discovery:",
+                nrow(discovery_data),
+                "unique:",
+                length(unique(discovery_data$SUBJ)),
+                "\n"
+            )
+
+            cat(
+                "Replication:",
+                nrow(replication_data),
+                "unique:",
+                length(unique(replication_data$SUBJ)),
+                "\n"
+            )
+
+
+            overlap <- intersect(
+                discovery_data$SUBJ,
+                replication_data$SUBJ
+            )
+
+
+            cat(
+                "Overlap:",
+                length(overlap),
+                "\n"
+            )
+
+
+            if (length(overlap) > 0) {
+
+                print(overlap)
+
+                stop(
+                    "DISCOVERY/REPLICATION OVERLAP detected in collapsed group ",
+                    group_name,
+                    "!"
+                )
+            }
+
+
+            ############################
+            # DISCOVERY CORRELATIONS
+            ############################
+
+            discovery_group_results <- list()
+
+
+            for (behavior in behavior_names) {
+
+                result <- run_spearman(
+                    discovery_data,
+                    behavior
+                )
+
+                result$sex <- sex
+                result$group <- group_name
+                result$connectivity <- con_type
+                result$behavior <- behavior
+                result$analysis_type <- "PRS_collapsed"
+
+                discovery_group_results[[behavior]] <- result
+
+
+                cat(
+                    "Discovery:",
+                    behavior,
+                    "rho =",
+                    round(result$rho, 3),
+                    "p =",
+                    signif(result$p, 3),
+                    "\n"
+                )
+            }
+
+
+            discovery_group_results <- do.call(
+                rbind,
+                discovery_group_results
+            )
+
+            rownames(discovery_group_results) <- NULL
+
+
+            ############################
+            # COLUMN ORDER
+            ############################
+
+            discovery_group_results <- discovery_group_results[
+                c(
+                    "sex",
+                    "analysis_type",
+                    "group",
+                    "connectivity",
+                    "behavior",
+                    "N",
+                    "rho",
+                    "p"
+                )
+            ]
+
+
+            ############################
+            # DISCOVERY SIGNIFICANT
+            ############################
+
+            discovery_sig <- discovery_group_results[
+                !is.na(discovery_group_results$p) &
+                discovery_group_results$p < DISCOVERY_P,
+            ]
+
+
+            cat(
+                "\nDiscovery correlations p <",
+                DISCOVERY_P,
+                ":",
+                nrow(discovery_sig),
+                "\n"
+            )
+
+
+            ############################
+            # REPLICATION
+            #
+            # Run ALL behaviors tested
+            # in discovery.
+            #
+            # IMPORTANT:
+            # replicated remains FALSE unless:
+            #
+            #   1. discovery p < .05
+            #   2. replication p < .05
+            #   3. same direction
+            #
+            # Thus this expands the replication
+            # output without changing the definition
+            # of a replicated finding.
+            ############################
+
+            replication_group_results <- list()
+
+
+            for (behavior in behavior_names) {
+
+
+                ############################
+                # FIND DISCOVERY RESULT
+                ############################
+
+                discovery_row <- discovery_group_results[
+                    discovery_group_results$behavior == behavior,
+                ]
+
+
+                ############################
+                # DISCOVERY VALUES
+                ############################
+
+                discovery_N <- discovery_row$N
+
+                discovery_rho <- discovery_row$rho
+
+                discovery_p <- discovery_row$p
+
+
+                ############################
+                # REPLICATION
+                ############################
+
+                rep_result <- run_spearman(
+                    replication_data,
+                    behavior
+                )
+
+
+                replication_N <- rep_result$N
+
+                replication_rho <- rep_result$rho
+
+                replication_p <- rep_result$p
+
+
+                ############################
+                # SAME DIRECTION
+                ############################
+
+                same_direction <- NA
+
+
+                if (!is.na(discovery_rho) &&
+                    !is.na(replication_rho)) {
+
+                    same_direction <-
+                        sign(discovery_rho) ==
+                        sign(replication_rho)
+                }
+
+
+                ############################
+                # SIGNIFICANCE FLAGS
+                ############################
+
+                discovery_significant <- FALSE
+
+                if (!is.na(discovery_p)) {
+
+                    discovery_significant <-
+                        discovery_p < DISCOVERY_P
+                }
+
+
+                replication_significant <- FALSE
+
+                if (!is.na(replication_p)) {
+
+                    replication_significant <-
+                        replication_p < REPLICATION_P
+                }
+
+
+                ############################
+                # REPLICATED
+                #
+                # SAME DEFINITION AS BEFORE
+                ############################
+
+                replicated <- FALSE
+
+
+                if (!is.na(same_direction)) {
+
+                    replicated <-
+                        discovery_significant &&
+                        replication_significant &&
+                        same_direction
+                }
+
+
+                ############################
+                # STORE RESULT
+                ############################
+
+                replication_group_results[[behavior]] <-
+                    data.frame(
+
+                        sex = sex,
+
+                        analysis_type = "PRS_collapsed",
+
+                        group = group_name,
+
+                        connectivity = con_type,
+
+                        behavior = behavior,
+
+                        N_discovery =
+                            discovery_N,
+
+                        rho_discovery =
+                            discovery_rho,
+
+                        p_discovery =
+                            discovery_p,
+
+                        discovery_significant =
+                            discovery_significant,
+
+                        N_replication =
+                            replication_N,
+
+                        rho_replication =
+                            replication_rho,
+
+                        p_replication =
+                            replication_p,
+
+                        replication_significant =
+                            replication_significant,
+
+                        same_direction =
+                            same_direction,
+
+                        replicated =
+                            replicated
+                    )
+
+
+                cat(
+                    "Replication:",
+                    behavior,
+                    "rho =",
+                    round(replication_rho, 3),
+                    "p =",
+                    signif(replication_p, 3),
+                    "\n"
+                )
+            }
+
+
+            ############################
+            # COMBINE REPLICATION RESULTS
+            ############################
+
+            replication_group_results <- do.call(
+                rbind,
+                replication_group_results
+            )
+
+            rownames(replication_group_results) <- NULL
+
+
+            ############################
+            # COLUMN ORDER
+            ############################
+
+            replication_group_results <-
+                replication_group_results[
+                    c(
+                        "sex",
+                        "analysis_type",
+                        "group",
+                        "connectivity",
+                        "behavior",
+                        "N_discovery",
+                        "rho_discovery",
+                        "p_discovery",
+                        "discovery_significant",
+                        "N_replication",
+                        "rho_replication",
+                        "p_replication",
+                        "replication_significant",
+                        "same_direction",
+                        "replicated"
+                    )
+                ]
+
+            ############################
+            # SAVE COLLAPSED RESULTS
+            ############################
+
+            discovery_filename <- paste0(
+                group_name,
+                "_",
+                con_type,
+                "_discovery.csv"
+            )
+
+            replication_filename <- paste0(
+                group_name,
+                "_",
+                con_type,
+                "_replication.csv"
+            )
+
+            write.csv(
+                discovery_group_results,
+                file.path(
+                    RESULT_DIR,
+                    discovery_filename
+                ),
+                row.names = FALSE
+            )
+
+            write.csv(
+                replication_group_results,
+                file.path(
+                    RESULT_DIR,
+                    replication_filename
+                ),
+                row.names = FALSE
+            )
+
+
+            ############################
+            # ADD TO MASTER TABLES
+            ############################
+
+            all_discovery_results[[result_counter]] <-
+                discovery_group_results
+
+            all_replication_results[[result_counter]] <-
+                replication_group_results
+
+            result_counter <- result_counter + 1
+
+
+            ############################
+            # PRINT REPLICATION RESULTS
+            ############################
+
+            if (nrow(replication_group_results) > 0) {
+
+                cat(
+                    "\nREPLICATION RESULTS:\n"
+                )
+
+                print(
+                    replication_group_results
+                )
+
+            } else {
+
+                cat(
+                    "\nNo discovery correlations passed p < ",
+                    DISCOVERY_P,
+                    "\n",
+                    sep = ""
+                )
+            }
+
+        }  # closes for (mdd_group in MDD_GROUPS)
+
+    }  # closes for (sex in c("female", "male"))
+
+}  # closes for (con_type in CON_TYPES)
+
+
+############################
+# 10. MASTER RESULT TABLES
+############################
+
+all_discovery_results <- do.call(
+    rbind,
+    all_discovery_results
+)
+
+all_replication_results <- do.call(
+    rbind,
+    all_replication_results
+)
+
+
+write.csv(
+    all_discovery_results,
+    file.path(
+        RESULT_DIR,
+        "ALL_DISCOVERY_CORRELATIONS.csv"
+    ),
+    row.names = FALSE
+)
+
+
+write.csv(
+    all_replication_results,
+    file.path(
+        RESULT_DIR,
+        "ALL_REPLICATION_CORRELATIONS.csv"
+    ),
+    row.names = FALSE
+)
+
+
+############################
+# 11. REPLICATED FINDINGS
+############################
+
+replicated_results <-
+    all_replication_results[
+        all_replication_results$replicated == TRUE,
+    ]
+
+
+write.csv(
+    replicated_results,
+    file.path(
+        RESULT_DIR,
+        "REPLICATED_FINDINGS.csv"
+    ),
+    row.names = FALSE
+)
+
+
+############################
+# 12. SUMMARY
+############################
+
+cat("\n\n========================================\n")
+cat("ANALYSIS COMPLETE\n")
+cat("========================================\n")
+
+cat(
+    "Total discovery correlations:",
+    nrow(all_discovery_results),
+    "\n"
+)
+
+cat(
+    "Discovery correlations p < 0.05:",
+    sum(
+        all_discovery_results$p < DISCOVERY_P,
+        na.rm = TRUE
+    ),
+    "\n"
+)
+
+cat(
+    "Replication tests:",
+    nrow(all_replication_results),
+    "\n"
+)
+
+cat(
+    "Replicated findings:",
+    nrow(replicated_results),
+    "\n"
+)
+
+cat(
+    "\nResults written to:\n",
+    RESULT_DIR,
+    "\n"
+)
+
+
+
+
+############################
+# 13. GROUP COMPARISONS:
+#     MEDIAN, MAD, WILCOXON
+############################
+
+cat("\n========================================\n")
+cat("13. GROUP COMPARISONS\n")
+cat("========================================\n")
+
+############################
+# SETTINGS
+############################
+
+comparison_sexes <- c(
+    "female",
+    "male"
+)
+
+comparison_variables <- list(
+    female = c(
+        "field_21001",   # BMI
+        "field_23106"    # Whole-body impedance
+    ),
+    male = c(
+        "field_46",      # Left hand grip strength
+        "field_47"       # Right hand grip strength
+    )
+)
+
+comparison_groups <- c(
+    "CTL",
+    "cMDD",
+    "rMDD"
+)
+
+############################
+# FUNCTION:
+# READ ONE FULL PRS GROUP
+# AND ADD BEHAVIOR DATA
+############################
+
+get_behavior_group_data <- function(
+    group_file,
+    behave_all
+) {
+
+    groups <- read.csv(
+        group_file,
+        stringsAsFactors = FALSE
+    )
+
+    groups$SUBJ <- as.character(
+        groups$SUBJ
+    )
+
+    if (anyDuplicated(groups$SUBJ)) {
+
+        stop(
+            "Duplicate SUBJ values found in group file: ",
+            group_file
+        )
+    }
+
+    dat <- merge(
+        groups[, "SUBJ", drop = FALSE],
+        behave_all,
+        by.x = "SUBJ",
+        by.y = "eid",
+        all.x = TRUE
+    )
+
+    dat
+}
+
+############################
+# FUNCTION:
+# COMBINE THE FULL
+# HIGH + LOW PRS GROUPS
+############################
+
+get_combined_behavior_group <- function(
+    sex,
+    mdd_group
+) {
+
+    sex_prefix <- ifelse(
+        sex == "female",
+        "females",
+        "males"
+    )
+
+    ############################
+    # FULL, UNSPLIT FILES
+    ############################
+
+    file_high <- file.path(
+        GROUP_DIR,
+        paste0(
+            sex_prefix,
+            "_HighPRS_",
+            mdd_group,
+            ".csv"
+        )
+    )
+
+    file_low <- file.path(
+        GROUP_DIR,
+        paste0(
+            sex_prefix,
+            "_LowPRS_",
+            mdd_group,
+            ".csv"
+        )
+    )
+
+    ############################
+    # CHECK FILES
+    ############################
+
+    if (!file.exists(file_high)) {
+
+        stop(
+            "Missing group file: ",
+            file_high
+        )
+    }
+
+    if (!file.exists(file_low)) {
+
+        stop(
+            "Missing group file: ",
+            file_low
+        )
+    }
+
+    ############################
+    # READ FULL GROUPS
+    ############################
+
+    high_data <- get_behavior_group_data(
+        file_high,
+        behave_all
+    )
+
+    low_data <- get_behavior_group_data(
+        file_low,
+        behave_all
+    )
+
+    ############################
+    # COLLAPSE PRS
+    ############################
+
+    dat <- rbind(
+        high_data,
+        low_data
+    )
+
+    ############################
+    # CHECK FOR DUPLICATES
+    ############################
+
+    if (anyDuplicated(dat$SUBJ)) {
+
+        stop(
+            "Duplicate SUBJ values after combining HighPRS and LowPRS: ",
+            sex,
+            " ",
+            mdd_group
+        )
+    }
+
+    dat
+}
+
+############################
+# FUNCTION:
+# MEDIAN + RAW MAD
+############################
+
+get_median_mad <- function(x) {
+
+    x <- x[
+        !is.na(x)
+    ]
+
+    if (length(x) == 0) {
+
+        return(
+            c(
+                N = 0,
+                median = NA_real_,
+                MAD = NA_real_
+            )
+        )
+    }
+
+    med <- median(x)
+
+    ############################
+    # MEDIAN ABSOLUTE DEVIATION
+    # AROUND THE MEDIAN
+    ############################
+
+    mad_raw <- median(
+        abs(x - med)
+    )
+
+    c(
+        N = length(x),
+        median = med,
+        MAD = mad_raw
+    )
+}
+
+############################
+# STORAGE
+############################
+
+group_summary_results <- list()
+
+wilcoxon_results <- list()
+
+summary_counter <- 1
+wilcox_counter <- 1
+
+############################
+# RUN ANALYSIS
+############################
+
+for (sex in comparison_sexes) {
+
+    cat(
+        "\n----------------------------------------\n"
+    )
+
+    cat(
+        "Sex:",
+        sex,
+        "\n"
+    )
+
+    cat(
+        "----------------------------------------\n"
+    )
+
+    ############################
+    # LOAD CTL / cMDD / rMDD
+    ############################
+
+    group_data <- list()
+
+    for (mdd_group in comparison_groups) {
+
+        cat(
+            "Loading:",
+            sex,
+            mdd_group,
+            "\n"
+        )
+
+        group_data[[mdd_group]] <-
+            get_combined_behavior_group(
+                sex = sex,
+                mdd_group = mdd_group
+            )
+
+        cat(
+            "  N =",
+            nrow(
+                group_data[[mdd_group]]
+            ),
+            "\n"
+        )
+    }
+
+    ############################
+    # ANALYZE VARIABLES
+    ############################
+
+    for (
+        variable
+        in comparison_variables[[sex]]
+    ) {
+
+        cat(
+            "\nVariable:",
+            variable,
+            "\n"
+        )
+
+        ############################
+        # MEDIAN + MAD
+        ############################
+
+        for (
+            mdd_group
+            in comparison_groups
+        ) {
+
+            x <-
+                group_data[[mdd_group]][[variable]]
+
+            stats <-
+                get_median_mad(x)
+
+            group_summary_results[[summary_counter]] <-
+                data.frame(
+                    sex = sex,
+                    group = mdd_group,
+                    variable = variable,
+                    N = stats["N"],
+                    median = stats["median"],
+                    MAD = stats["MAD"],
+                    stringsAsFactors = FALSE
+                )
+
+            summary_counter <-
+                summary_counter + 1
+
+            cat(
+                "  ",
+                mdd_group,
+                ": N =",
+                stats["N"],
+                " median =",
+                stats["median"],
+                " MAD =",
+                stats["MAD"],
+                "\n",
+                sep = ""
+            )
+        }
+
+        ############################
+        # WILCOXON COMPARISONS
+        ############################
+
+        comparisons <- list(
+            c("CTL", "cMDD"),
+            c("CTL", "rMDD"),
+            c("cMDD", "rMDD")
+        )
+
+        for (
+            comparison
+            in comparisons
+        ) {
+
+            group_1 <-
+                comparison[1]
+
+            group_2 <-
+                comparison[2]
+
+            x <-
+                group_data[[group_1]][[variable]]
+
+            y <-
+                group_data[[group_2]][[variable]]
+
+            ############################
+            # REMOVE MISSING VALUES
+            ############################
+
+            x <- x[
+                !is.na(x)
+            ]
+
+            y <- y[
+                !is.na(y)
+            ]
+
+            ############################
+            # TWO-SIDED WILCOXON
+            # RANK-SUM TEST
+            ############################
+
+            test <- wilcox.test(
+                x,
+                y,
+                alternative = "two.sided",
+                exact = FALSE
+            )
+
+            wilcoxon_results[[wilcox_counter]] <-
+                data.frame(
+                    sex = sex,
+                    variable = variable,
+                    group_1 = group_1,
+                    group_2 = group_2,
+                    N_group_1 = length(x),
+                    N_group_2 = length(y),
+                    W = unname(
+                        test$statistic
+                    ),
+                    p_value = test$p.value,
+                    stringsAsFactors = FALSE
+                )
+
+            wilcox_counter <-
+                wilcox_counter + 1
+
+            cat(
+                "  Wilcoxon:",
+                group_1,
+                "vs",
+                group_2,
+                "p =",
+                format.pval(
+                    test$p.value,
+                    digits = 4
+                ),
+                "\n"
+            )
+        }
+    }
+}
+
+############################
+# COMBINE RESULTS
+############################
+
+group_summary_results <-
+    do.call(
+        rbind,
+        group_summary_results
+    )
+
+wilcoxon_results <-
+    do.call(
+        rbind,
+        wilcoxon_results
+    )
+
+############################
+# WRITE RESULTS
+############################
+
+write.csv(
+    group_summary_results,
+    file.path(
+        RESULT_DIR,
+        "GROUP_MEDIAN_MAD.csv"
+    ),
+    row.names = FALSE
+)
+
+write.csv(
+    wilcoxon_results,
+    file.path(
+        RESULT_DIR,
+        "GROUP_WILCOXON_TESTS.csv"
+    ),
+    row.names = FALSE
+)
+
+############################
+# PRINT RESULTS
+############################
+
+cat(
+    "\n========================================\n"
+)
+
+cat(
+    "GROUP MEDIANS AND MAD\n"
+)
+
+cat(
+    "========================================\n"
+)
+
+print(
+    group_summary_results,
+    row.names = FALSE
+)
+
+cat(
+    "\n========================================\n"
+)
+
+cat(
+    "WILCOXON TESTS\n"
+)
+
+cat(
+    "========================================\n"
+)
+
+print(
+    wilcoxon_results,
+    row.names = FALSE
+)
+
+cat(
+    "\nCreated:\n"
+)
+
+cat(
+    file.path(
+        RESULT_DIR,
+        "GROUP_MEDIAN_MAD.csv"
+    ),
+    "\n"
+)
+
+cat(
+    file.path(
+        RESULT_DIR,
+        "GROUP_WILCOXON_TESTS.csv"
+    ),
+    "\n"
+)
+
+############################################################
+# 14. MEAN LN-DMN CONNECTIVITY BY MDD GROUP
+#
+# LARGE ("big") connectivity cluster only
+#
+# Full unsplit groups:
+#   HighPRS + LowPRS collapsed
+#
+# Separately for:
+#   females: CTL, cMDD, rMDD
+#   males:   CTL, cMDD, rMDD
+#
+# Reports:
+#   N
+#   Mean CON
+#   Standard deviation (SD)
+#   Standard error (SE)
+############################################################
+
+cat("\n========================================\n")
+cat("14. MEAN LN-DMN CONNECTIVITY - BIG CLUSTER\n")
+cat("========================================\n")
+
+
+############################
+# READ BIG CONNECTIVITY DATA
+############################
+
+female_con_big <- get_connectivity_file(
+    "female",
+    "big"
+)
+
+male_con_big <- get_connectivity_file(
+    "male",
+    "big"
+)
+
+
+############################
+# FUNCTION:
+# GET FULL PRS-COLLAPSED GROUP
+# WITH CONNECTIVITY
+############################
+
+get_full_connectivity_group <- function(
+    sex,
+    mdd_group,
+    connectivity
+) {
+
+    sex_prefix <- ifelse(
+        sex == "female",
+        "females",
+        "males"
+    )
+
+
+    ############################
+    # FULL UNSPLIT GROUP FILES
+    ############################
+
+    file_high <- file.path(
+        GROUP_DIR,
+        paste0(
+            sex_prefix,
+            "_HighPRS_",
+            mdd_group,
+            ".csv"
+        )
+    )
+
+    file_low <- file.path(
+        GROUP_DIR,
+        paste0(
+            sex_prefix,
+            "_LowPRS_",
+            mdd_group,
+            ".csv"
+        )
+    )
+
+
+    ############################
+    # CHECK FILES
+    ############################
+
+    if (!file.exists(file_high)) {
+        stop(
+            "Missing group file: ",
+            file_high
+        )
+    }
+
+    if (!file.exists(file_low)) {
+        stop(
+            "Missing group file: ",
+            file_low
+        )
+    }
+
+
+    ############################
+    # READ GROUP MEMBERSHIP
+    ############################
+
+    high <- read.csv(
+        file_high,
+        stringsAsFactors = FALSE
+    )
+
+    low <- read.csv(
+        file_low,
+        stringsAsFactors = FALSE
+    )
+
+    high$SUBJ <- as.character(
+        high$SUBJ
+    )
+
+    low$SUBJ <- as.character(
+        low$SUBJ
+    )
+
+
+    ############################
+    # COMBINE HIGH + LOW PRS
+    ############################
+
+    subjects <- rbind(
+        high[, "SUBJ", drop = FALSE],
+        low[, "SUBJ", drop = FALSE]
+    )
+
+
+    ############################
+    # CHECK DUPLICATE SUBJECTS
+    ############################
+
+    if (anyDuplicated(subjects$SUBJ)) {
+
+        stop(
+            "Duplicate SUBJ values after combining HighPRS and LowPRS: ",
+            sex,
+            " ",
+            mdd_group
+        )
+    }
+
+
+    ############################
+    # ADD CONNECTIVITY
+    ############################
+
+    dat <- merge(
+        subjects,
+        connectivity[, c("SUBJ", "CON")],
+        by = "SUBJ",
+        all.x = TRUE
+    )
+
+    dat
+}
+
+
+############################
+# STORAGE
+############################
+
+con_summary_results <- list()
+
+con_counter <- 1
+
+
+############################
+# RUN FOR FEMALES AND MALES
+############################
+
+for (sex in c("female", "male")) {
+
+
+    ############################
+    # SELECT SEX-SPECIFIC
+    # BIG CONNECTIVITY DATA
+    ############################
+
+    if (sex == "female") {
+
+        connectivity <- female_con_big
+
+    } else {
+
+        connectivity <- male_con_big
+    }
+
+
+    cat(
+        "\n----------------------------------------\n"
+    )
+
+    cat(
+        "Sex:",
+        sex,
+        "\n"
+    )
+
+    cat(
+        "----------------------------------------\n"
+    )
+
+
+    ############################
+    # CTL / cMDD / rMDD
+    ############################
+
+    for (mdd_group in c(
+        "CTL",
+        "cMDD",
+        "rMDD"
+    )) {
+
+
+        ############################
+        # GET FULL GROUP
+        ############################
+
+        dat <- get_full_connectivity_group(
+            sex = sex,
+            mdd_group = mdd_group,
+            connectivity = connectivity
+        )
+
+
+        ############################
+        # REMOVE MISSING CON
+        ############################
+
+        con <- dat$CON
+
+        con <- con[
+            !is.na(con)
+        ]
+
+
+        ############################
+        # DESCRIPTIVE STATISTICS
+        ############################
+
+        N <- length(con)
+
+        mean_CON <- mean(
+            con
+        )
+
+        SD_CON <- sd(
+            con
+        )
+
+        SE_CON <- SD_CON / sqrt(N)
+
+
+        ############################
+        # STORE RESULT
+        ############################
+
+        con_summary_results[[con_counter]] <-
+            data.frame(
+
+                sex = sex,
+
+                group = mdd_group,
+
+                connectivity = "big",
+
+                N = N,
+
+                mean_CON = mean_CON,
+
+                SD_CON = SD_CON,
+
+                SE_CON = SE_CON,
+
+                stringsAsFactors = FALSE
+            )
+
+
+        con_counter <-
+            con_counter + 1
+
+
+        ############################
+        # PRINT
+        ############################
+
+        cat(
+            mdd_group,
+            ": N =",
+            N,
+            " mean CON =",
+            mean_CON,
+            " SD =",
+            SD_CON,
+            " SE =",
+            SE_CON,
+            "\n"
+        )
+    }
+}
+
+
+############################
+# COMBINE RESULTS
+############################
+
+con_summary_results <-
+    do.call(
+        rbind,
+        con_summary_results
+    )
+
+
+############################
+# WRITE RESULTS
+############################
+
+write.csv(
+    con_summary_results,
+    file.path(
+        RESULT_DIR,
+        "BIG_CLUSTER_CON_DESCRIPTIVES.csv"
+    ),
+    row.names = FALSE
+)
+
+
+############################
+# PRINT FINAL TABLE
+############################
+
+cat(
+    "\n========================================\n"
+)
+
+cat(
+    "BIG CLUSTER LN-DMN CONNECTIVITY\n"
+)
+
+cat(
+    "MEAN, SD AND SE BY GROUP\n"
+)
+
+cat(
+    "========================================\n"
+)
+
+print(
+    con_summary_results,
+    row.names = FALSE
+)
+
+cat(
+    "\nCreated:\n"
+)
+
+cat(
+    file.path(
+        RESULT_DIR,
+        "BIG_CLUSTER_CON_DESCRIPTIVES.csv"
+    ),
+    "\n"
+)

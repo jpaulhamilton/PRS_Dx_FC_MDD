@@ -1,0 +1,861 @@
+
+
+run_ANOVA_big_blob <- function(input_table,top_dir,blob_num,stat,stat_name,gender,node,ass_networks,ass_small_blobs,nw_l,a_l) {
+
+
+current_table <- read.csv(paste(top_dir,input_table,sep=""), header = TRUE, sep = " ", dec = ".")
+current_table[current_table=="CTL"]<-"HC"
+current_table[current_table=="cMDD"]<-"CD"
+current_table[current_table=="rMDD"]<-"RD"
+
+Network <- c("visual","somatomotor","dorsal attention","ventral attention","limbic","frontoparietal","default mode") 
+Acronym <- c("VN","SMN","DAN","VAN","LN","FPN", "DMN")
+N_A_table <- data.frame(Network,Acronym)
+
+current_table_ANOVA <- subset(current_table, select = -c(SUBJ))
+
+current_table_ANOVA$PRS <- factor(current_table_ANOVA$PRS,
+                                  levels=c("LowPRS","HighPRS"),
+                                  labels=c("LowPRS","HighPRS"))
+current_table_ANOVA$MDD <- factor(current_table_ANOVA$MDD,
+                                  levels=c("HC","CD","RD"),
+                                  labels=c("HC","CD","RD"))
+model <- lm(CON ~ PRS * MDD, data=current_table_ANOVA)
+sstable <- anova(model)
+
+library(emmeans)
+library(xlsx)
+library(gplots)
+library(emmeans)
+library(sm)
+library(rstatix)
+library(ggpubr)
+library(dplyr)
+library(caret)
+library("ggpubr")
+
+
+em <- emmeans(model,~ MDD * PRS)
+SE <- summary(em)$SE[1] 
+
+myform_aov <- as.formula(sprintf("%s ~ %s * %s", "CON","PRS", "MDD"))
+res.aov <- get_anova_table(current_table_ANOVA %>% anova_test(myform_aov))
+model <- aov(CON ~ MDD*PRS, data = current_table_ANOVA)
+
+#TTest main effects (MDD)
+HC_all <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="CD"),])
+HC_all <- droplevels( HC_all[-which(HC_all$MDD =="RD"),])
+HC_all <- subset(HC_all, select = -c(MDD))
+
+CD_all <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="HC"),])
+CD_all <- droplevels( CD_all[-which(CD_all$MDD =="RD"),])
+CD_all <- subset(CD_all, select = -c(MDD))
+
+RD_all <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="HC"),])
+RD_all <- droplevels( RD_all[-which(RD_all$MDD =="CD"),])
+RD_all <- subset(RD_all, select = -c(MDD))
+
+#HC vs CD
+ttest_HC_v_CD <- t.test(HC_all$CON, CD_all$CON, var.equal=TRUE)
+ttest_HC_v_CD$statistic <- round(ttest_HC_v_CD$statistic,digits=4)
+ttest_HC_v_CD$p.value <- round(ttest_HC_v_CD$p.value,digits=4)
+
+#HC vs RD
+ttest_HC_v_RD <- t.test(HC_all$CON, RD_all$CON, var.equal=TRUE)
+ttest_HC_v_RD$statistic <- round(ttest_HC_v_RD$statistic,digits=4)
+ttest_HC_v_RD$p.value <- round(ttest_HC_v_RD$p.value,digits=4)
+
+#HC vs RD
+ttest_CD_v_RD <- t.test(CD_all$CON, RD_all$CON, var.equal=TRUE)
+ttest_CD_v_RD$statistic <- round(ttest_CD_v_RD$statistic,digits=4)
+ttest_CD_v_RD$p.value <- round(ttest_CD_v_RD$p.value,digits=4)
+
+#TTest main effects (PRS)
+High_all <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$PRS =="LowPRS"),])
+High_all <- subset(High_all, select = -c(PRS))
+Low_all <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$PRS =="HighPRS"),])
+Low_all <- subset(Low_all, select = -c(PRS))
+
+#High vs Low
+ttest_High_v_Low <- t.test(High_all$CON, Low_all$CON, var.equal=TRUE)
+ttest_High_v_Low$statistic <- round(ttest_High_v_Low$statistic,digits=4)
+ttest_High_v_Low$p.value <- round(ttest_High_v_Low$p.value,digits=4)
+
+#Make
+#Main MDD
+MAIN_TABLE <- matrix(c(ttest_HC_v_CD$statistic, ttest_HC_v_CD$parameter, ttest_HC_v_CD$p.value,
+ttest_HC_v_RD$statistic, ttest_HC_v_RD$parameter, ttest_HC_v_RD$p.value,
+ttest_CD_v_RD$statistic, ttest_CD_v_RD$parameter, ttest_CD_v_RD$p.value,
+ttest_High_v_Low$statistic, ttest_High_v_Low$parameter, ttest_High_v_Low$p.value), ncol=3, byrow=TRUE)
+colnames(MAIN_TABLE) <- c('t','df','p')
+rownames(MAIN_TABLE) <- c('HC v CD','HC v RD','CD v RD','PRS: High v Low')
+MAIN_TABLE <- as.table(MAIN_TABLE)
+
+
+
+#TTEST: SPLIT BY MDD (high v low)
+HC <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="CD"),])
+HC <- droplevels( HC[-which(HC$MDD =="RD"),])
+HC_low <- droplevels( HC[-which(HC$PRS =="HighPRS"),])
+HC_high <- droplevels( HC[-which(HC$PRS =="LowPRS"),])
+
+CD <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="HC"),])
+CD <- droplevels( CD[-which(CD$MDD =="RD"),])
+CD_low <- droplevels( CD[-which(CD$PRS =="HighPRS"),])
+CD_high <- droplevels( CD[-which(CD$PRS =="LowPRS"),])
+
+RD <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="HC"),])
+RD <- droplevels( RD[-which(RD$MDD =="CD"),])
+RD_low <- droplevels( RD[-which(RD$PRS =="HighPRS"),])
+RD_high <- droplevels( RD[-which(RD$PRS =="LowPRS"),])
+
+
+ttest_HC_PRS <- t.test(HC_low$CON, HC_high$CON, var.equal=TRUE)
+ttest_HC_PRS$statistic <- round(ttest_HC_PRS$statistic,digits=4)
+ttest_HC_PRS$p.value <- round(ttest_HC_PRS$p.value,digits=4)
+
+ttest_CD_PRS <- t.test(CD_low$CON, CD_high$CON, var.equal=TRUE)
+ttest_CD_PRS$statistic <- round(ttest_CD_PRS$statistic,digits=4)
+ttest_CD_PRS$p.value <- round(ttest_CD_PRS$p.value,digits=4)
+
+ttest_RD_PRS <- t.test(RD_low$CON, RD_high$CON, var.equal=TRUE)
+ttest_RD_PRS$statistic <- round(ttest_RD_PRS$statistic,digits=4)
+ttest_RD_PRS$p.value <- round(ttest_RD_PRS$p.value,digits=4)
+
+MDD_TABLE <- matrix(c(ttest_HC_PRS$statistic, ttest_HC_PRS$parameter, ttest_HC_PRS$p.value,
+ttest_CD_PRS$statistic, ttest_CD_PRS$parameter, ttest_CD_PRS$p.value,
+ttest_RD_PRS$statistic, ttest_RD_PRS$parameter, ttest_RD_PRS$p.value), ncol=3, byrow=TRUE)
+colnames(MDD_TABLE) <- c('t','df','p')
+rownames(MDD_TABLE) <- c('HC: LowVHigh-PRS','CD: LowVHigh-PRS','RD: LowVHigh-PRS')
+MDD_TABLE <- as.table(MDD_TABLE)
+
+
+#TTEST: SPLIT BY PRS (HC v CD, HC v RD, CD v RD)
+HC <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="CD"),])
+HC <- droplevels( HC[-which(HC$MDD =="RD"),])
+HC_high <- droplevels( HC[-which(HC$PRS =="LowPRS"),])
+HC_low <- droplevels( HC[-which(HC$PRS =="HighPRS"),])
+CD <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="HC"),])
+CD <- droplevels( CD[-which(CD$MDD =="RD"),])
+CD_high <- droplevels( CD[-which(CD$PRS =="LowPRS"),])
+CD_low <- droplevels( CD[-which(CD$PRS =="HighPRS"),])
+RD <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="HC"),])
+RD <- droplevels( RD[-which(RD$MDD =="CD"),])
+RD_high <- droplevels( RD[-which(RD$PRS =="LowPRS"),])
+RD_low <- droplevels( RD[-which(RD$PRS =="HighPRS"),])
+
+#HC v CD (high)
+ttest_HC_v_CD_high <- t.test(HC_high$CON, CD_high$CON, var.equal=TRUE)
+ttest_HC_v_CD_high$statistic <- round(ttest_HC_v_CD_high$statistic,digits=4)
+ttest_HC_v_CD_high$p.value <- round(ttest_HC_v_CD_high$p.value,digits=4)
+
+#HC v RD (high)
+ttest_HC_v_RD_high <- t.test(HC_high$CON, RD_high$CON, var.equal=TRUE)
+ttest_HC_v_RD_high$statistic <- round(ttest_HC_v_RD_high$statistic,digits=4)
+ttest_HC_v_RD_high$p.value <- round(ttest_HC_v_RD_high$p.value,digits=4)
+
+#CD v RD (high)
+ttest_CD_v_RD_high <- t.test(CD_high$CON, RD_high$CON, var.equal=TRUE)
+ttest_CD_v_RD_high$statistic <- round(ttest_CD_v_RD_high$statistic,digits=4)
+ttest_CD_v_RD_high$p.value <- round(ttest_CD_v_RD_high$p.value,digits=4)
+
+#HC v CD (low)
+ttest_HC_v_CD_low <- t.test(HC_low$CON, CD_low$CON, var.equal=TRUE)
+ttest_HC_v_CD_low$statistic <- round(ttest_HC_v_CD_low$statistic,digits=4)
+ttest_HC_v_CD_low$p.value <- round(ttest_HC_v_CD_low$p.value,digits=4)
+
+#HC v RD (low)
+ttest_HC_v_RD_low <- t.test(HC_low$CON, RD_low$CON, var.equal=TRUE)
+ttest_HC_v_RD_low$statistic <- round(ttest_HC_v_RD_low$statistic,digits=4)
+ttest_HC_v_RD_low$p.value <- round(ttest_HC_v_RD_low$p.value,digits=4)
+
+#CD v RD (low)
+ttest_CD_v_RD_low <- t.test(CD_low$CON, RD_low$CON, var.equal=TRUE)
+ttest_CD_v_RD_low$statistic <- round(ttest_CD_v_RD_low$statistic,digits=4)
+ttest_CD_v_RD_low$p.value <- round(ttest_CD_v_RD_low$p.value,digits=4)
+
+
+
+#med ANOVA
+
+current_table_pre_med <- read.csv(paste(top_dir,input_table,sep=""), header = TRUE, sep = " ", dec = ".")
+current_table_pre_med[current_table_pre_med=="CTL"]<-"HC"
+current_table_pre_med[current_table_pre_med=="cMDD"]<-"CD"
+current_table_pre_med[current_table_pre_med=="rMDD"]<-"RD"
+
+med_status <- read.csv('EID_Med.txt', header = TRUE, sep = " ", dec = ".")
+med_status_empy_list <- list()
+ids <- current_table_pre_med$SUBJ
+
+current_table_pre_med[ , 'MedStatus'] = NA
+ids <- current_table_pre_med$SUBJ
+q <- 1
+for (id in ids) {
+c_id <- which(med_status$SUBJ == id)
+c_med_s <- med_status$MedStatus[c_id]
+current_table_pre_med$MedStatus[q] <- c_med_s
+q <- q + 1
+}
+
+current_table_pre_unmedicated <- current_table_pre_med[current_table_pre_med$MedStatus == 0, ]
+current_table_pre_medicated <- current_table_pre_med[current_table_pre_med$MedStatus == 1, ]
+#check ratios
+number_med_HC <- dim(current_table_pre_medicated[current_table_pre_medicated$MDD == "HC", ])[1]
+number_med_CD <- dim(current_table_pre_medicated[current_table_pre_medicated$MDD == "CD", ])[1]
+number_med_RD <- dim(current_table_pre_medicated[current_table_pre_medicated$MDD == "RD", ])[1]
+
+number_tot_HC <- dim(current_table_pre_med[current_table_pre_med$MDD == "HC", ])[1]
+number_tot_CD <- dim(current_table_pre_med[current_table_pre_med$MDD == "CD", ])[1]
+number_tot_RD <- dim(current_table_pre_med[current_table_pre_med$MDD == "RD", ])[1]
+
+##
+
+current_table_MEDANOVA <- subset(current_table_pre_unmedicated, select = -c(SUBJ))
+current_table_MEDANOVA <- subset(current_table_MEDANOVA, select = -c(MedStatus))
+
+
+current_table_MEDANOVA$PRS <- factor(current_table_MEDANOVA$PRS,
+                                  levels=c("LowPRS","HighPRS"),
+                                  labels=c("LowPRS","HighPRS"))
+current_table_MEDANOVA$MDD <- factor(current_table_MEDANOVA$MDD,
+                                  levels=c("HC","CD","RD"),
+                                  labels=c("HC","CD","RD"))
+model_med <- lm(CON ~ PRS * MDD, data=current_table_MEDANOVA)
+sstable_med <- anova(model_med)
+
+
+
+sstable_med$pes <- c(sstable_med$'Sum Sq'[-nrow(sstable_med)], NA)/(sstable_med$'Sum Sq' + sstable_med$'Sum Sq'[nrow(sstable_med)])
+colnames(sstable_med) <- c("dF", "SS","MS", "F", "p", "partial eta-sq")
+rownames(sstable_med) <- c("MDDstatus","Medstatus","MDDstatus:Medstatus", "Error")
+#write.csv(sstable_med,file=paste(paste("v2_med_table_BIG_BLOB",blob_num,stat_name,"node",node,gender,sep="_"),".csv",sep=""))
+
+
+
+
+
+
+PRS_TABLE <- matrix(c(ttest_HC_v_CD_high$statistic, ttest_HC_v_CD_high$parameter, ttest_HC_v_CD_high$p.value,
+ttest_HC_v_RD_high$statistic, ttest_HC_v_RD_high$parameter, ttest_HC_v_RD_high$p.value,
+ttest_CD_v_RD_high$statistic, ttest_CD_v_RD_high$parameter, ttest_CD_v_RD_high$p.value,
+ttest_HC_v_CD_low$statistic, ttest_HC_v_CD_low$parameter, ttest_HC_v_CD_low$p.value,
+ttest_HC_v_RD_low$statistic, ttest_HC_v_RD_low$parameter, ttest_HC_v_RD_low$p.value,
+ttest_CD_v_RD_low$statistic, ttest_CD_v_RD_low$parameter, ttest_CD_v_RD_low$p.value), ncol=3, byrow=TRUE)
+colnames(PRS_TABLE) <- c('t','df','p')
+rownames(PRS_TABLE) <- c('HighPRS: HCvCD','HighPRS: HCvRD','HighPRS: CDvRD',
+'LowPRS: HCvCD','LowPRS: HCvRD','LowPRS: CDvRD')
+PRS_TABLE <- as.table(PRS_TABLE)
+
+
+
+
+library(gridExtra)
+library(grid)
+library(gtable)
+library(lattice)
+
+#get network names
+
+nw_numbers_as_string <- ass_networks
+nw_numbers_as_string_vector <- strsplit(nw_numbers_as_string, " ")[[1]]
+#number_of_networks <- length(nw_numbers_as_string_vector)
+index_of_network_names <- c()
+for (i in nw_numbers_as_string_vector) {
+nw_number_as_integers <- as.integer(i)
+index_of_network_names <- append(index_of_network_names,nw_number_as_integers)
+}
+
+
+
+
+#pdf(file = "q3.pdf")
+#p1 <- ggboxplot(current_table_ANOVA, x = "MDD", y = "CON", color = "PRS",
+#          palette = c("#00AFBB", "#E7B800"),title=paste("MAIN BIG BLOB ",blob_num,stat_name,"node",node,gender,sep=" "))
+
+#Lenient-Voxel, Stringent-Cluster Finding 1 in Unmedicated Sample
+#Seed network: VN
+#Overlaps with: VN, DAN, FPN
+#Based on stringent- voxel, lenient-cluster finding(s): 3
+
+
+p1 <- ggbarplot(current_table_ANOVA, x = "MDD", y = "connectivty z-score", color = "PRS",xlab=("Depression Status"),
+ add = "mean_se", palette = c("#00AFBB", "#E7B800"),title=paste("Lenient-voxel, Stringent-Cluster Finding",blob_num, "in Full Sample", "\n", "Seed network:",a_l[node],"\n","Overlaps with:",paste(a_l[index_of_network_names],collapse=","),"\n","Based on stringent-voxel, lenient-cluster finding(s):",ass_small_blobs,sep=" "),position = position_dodge())
+
+#p1_med <- ggbarplot(current_table_22ANOVA, x = "MDD", y = "CON", color = "MedStatus",
+# add = "mean_se", palette = c("#00AFBB", "#E7B800"),title=paste("BIG BLOB #",blob_num,stat_name,"node",node,gender,"Network:",ass_networks,"StringentBlobs:",ass_small_blobs,"MED-STAT",ep=" "),position = position_dodge())
+
+p1_med <- ggbarplot(current_table_MEDANOVA, x = "MDD", y = "connectivty z-score", color = "PRS",xlab=("Depression Status"),
+ add = "mean_se", palette = c("#00AFBB", "#E7B800"),title=paste("Lenient-voxel, Stringent-Cluster Finding",blob_num, "in Unmedicated Sample", "\n", "Seed network:",a_l[node],"\n","Overlaps with:",paste(a_l[index_of_network_names],collapse=","),"\n","Based on stringent-voxel, lenient-cluster finding(s):",ass_small_blobs,sep=" "),position = position_dodge())
+
+
+
+#Main anova table
+d <- head(res.aov)
+table <- tableGrob(d)
+h <- grobHeight(table)
+w <- grobWidth(table)
+title <- textGrob(paste("Lenient-voxel, Stringent-Cluster Finding",blob_num, "in Full Sample, FULL-ANOVA",sep=" "), y=unit(0.6,"npc") + 0.5*h, 
+                  vjust=0, gp=gpar(fontsize=10))
+footnote <- textGrob("ges = generalized eta-squared", 
+                     x=unit(0.5,"npc") - 1.9*w,
+                     y=unit(0.5,"npc") - 0.9*h, 
+                  vjust=1, hjust=0,gp=gpar( fontface="italic"))
+gt <- gTree(children=gList(table, title, footnote))
+
+#acronyms
+Network <- c("visual","somatomotor","dorsal attention","ventral attention","limbic","frontoparietal","default mode") 
+Acronym <- c("VN","SMN","DAN","VAN","LN","FPN","DMN")
+N_A_table <- data.frame(Network,Acronym)
+d_a <- head(N_A_table)
+table_a <- tableGrob(N_A_table)
+h_a <- grobHeight(table_a)
+w_a <- grobWidth(table_a)
+title_a <- textGrob(paste("",sep=" "), y=unit(0.6,"npc") + 0.5*h, 
+                  vjust=0, gp=gpar(fontsize=10))
+footnote_a <- textGrob("", 
+                     x=unit(0.5,"npc") - 1.9*w_a,
+                     y=unit(0.5,"npc") - 0.9*h_a, 
+                  vjust=1, hjust=0,gp=gpar( fontface="italic"))
+gt_a <- gTree(children=gList(table_a, title_a, footnote_a))
+
+
+#Med anova table
+#old version
+#myform_med_aov <- as.formula(sprintf("%s ~ %s * %s", "CON","MDD", "MedStatus"))
+#res_med.aov <- get_anova_table(current_table_22ANOVA %>% anova_test(myform_med_aov))
+#model_med <- aov(CON ~ MDD*MedStatus, data = current_table_22ANOVA)
+
+
+#d_med <- head(res_med.aov)
+#table_med <- tableGrob(d_med)
+#h_med <- grobHeight(table_med)
+#w_med <- grobWidth(table_med)
+#title_med <- textGrob(paste("Stringent BLOB ",blob_num,stat_name,"node",node,gender,"MEDICATION ANOVA",sep=" "), y=unit(0.6,"npc") + 0.5*h_med, 
+#                  vjust=0, gp=gpar(fontsize=10))
+#footnote_med <- textGrob("footnote", 
+#                     x=unit(0.5,"npc") - 1.9*w_med,
+#                     y=unit(0.5,"npc") - 0.9*h_med, 
+#                  vjust=1, hjust=0,gp=gpar( fontface="italic"))
+#gt_med <- gTree(children=gList(table_med, title_med, footnote_med))
+
+#new version
+myform_med_aov <- as.formula(sprintf("%s ~ %s * %s", "CON","PRS", "MDD"))
+res_med.aov <- get_anova_table(current_table_MEDANOVA %>% anova_test(myform_med_aov))
+model_med <- aov(CON ~ MDD*PRS, data = current_table_MEDANOVA)
+
+d_med <- head(res_med.aov)
+table_med <- tableGrob(d_med)
+h_med <- grobHeight(table_med)
+w_med <- grobWidth(table_med)
+title_med <- textGrob(paste("Lenient-voxel, Stringent-Cluster Finding",blob_num, "in Unmedicated Sample, FULL-ANOVA",sep=" "), y=unit(0.6,"npc") + 0.5*h_med, 
+                  vjust=0, gp=gpar(fontsize=10))
+footnote_med <- textGrob("ges = generalized eta-squared", 
+                     x=unit(0.5,"npc") - 1.9*w_med,
+                     y=unit(0.5,"npc") - 0.9*h_med, 
+                  vjust=1, hjust=0,gp=gpar( fontface="italic"))
+gt_med <- gTree(children=gList(table_med, title_med, footnote_med))
+
+
+
+
+
+####
+
+
+#ttest MAIN
+d <- head(MAIN_TABLE)
+table <- tableGrob(d)
+h <- grobHeight(table)
+w <- grobWidth(table)
+title <- textGrob(paste("Lenient-voxel, Stringent-Cluster Finding",blob_num, "in Full Sample, T-test MAIN EFFECTS",sep=" "), y=unit(0.64,"npc") + 0.5*h, 
+                  vjust=0, gp=gpar(fontsize=10))
+footnote <- textGrob("", 
+                     x=unit(0.5,"npc") - 1.9*w,
+                     y=unit(0.5,"npc") - 0.9*h, 
+                  vjust=1, hjust=0,gp=gpar( fontface="italic"))
+gt_MAIN <- gTree(children=gList(table, title, footnote))
+
+
+
+#ttest MDD split
+d <- head(MDD_TABLE)
+table <- tableGrob(d)
+h <- grobHeight(table)
+w <- grobWidth(table)
+title <- textGrob(paste("Lenient-voxel, Stringent-Cluster Finding",blob_num, "in Full Sample, PRS effects in each Depression Status group",sep=" "), y=unit(0.64,"npc") + 0.5*h, 
+                  vjust=0, gp=gpar(fontsize=10))
+footnote <- textGrob("", 
+                     x=unit(0.5,"npc") - 1.9*w,
+                     y=unit(0.5,"npc") - 0.9*h, 
+                  vjust=1, hjust=0,gp=gpar( fontface="italic"))
+gt_MDD <- gTree(children=gList(table, title, footnote))
+
+
+#ttest PRS split
+d <- head(PRS_TABLE)
+table <- tableGrob(d)
+h <- grobHeight(table)
+w <- grobWidth(table)
+title <- textGrob(paste("Lenient-voxel, Stringent-Cluster Finding",blob_num, "in Full Sample, Depression Status effects in each Polygenic Risk group",sep=" "), y=unit(0.68,"npc") + 0.5*h, 
+                  vjust=0, gp=gpar(fontsize=10))
+footnote <- textGrob("", 
+                     x=unit(0.5,"npc") - 1.9*w,
+                     y=unit(0.5,"npc") - 0.9*h, 
+                  vjust=1, hjust=0,gp=gpar( fontface="italic"))
+gt_PRS <- gTree(children=gList(table, title, footnote))
+
+
+
+
+#PLOT
+#if (stat == 2) {
+if (node == 1 & blob_num ==1 ) { 
+grid.arrange(gt_a)
+}
+
+
+grid.arrange(p1, gt,ncol=1)
+grid.arrange(p1_med, gt_med,ncol=1)
+grid.arrange(gt_MAIN,gt_MDD,gt_PRS,ncol=1)
+
+
+
+#}
+#else {
+
+#grid.arrange(p1, gt,ncol=1)
+#grid.arrange(gt_MAIN,gt_MDD,gt_PRS,ncol=1)
+
+#}
+
+#end function
+}
+
+
+
+
+
+
+run_ANOVA_small_blob <- function(input_table,top_dir,blob_num,stat,stat_name,gender,node,ass_networks,rel_big_blob,nw_l,a_l) {
+
+
+current_table <- read.csv(paste(top_dir,input_table,sep=""), header = TRUE, sep = " ", dec = ".")
+current_table[current_table=="CTL"]<-"HC"
+current_table[current_table=="cMDD"]<-"CD"
+current_table[current_table=="rMDD"]<-"RD"
+
+Network <- c("visual","somatomotor","dorsal attention","ventral attention","limbic","frontoparietal","default mode") 
+Acronym <- c("VN","SMN","DAN","VAN","LN","FPN","DMN")
+N_A_table <- data.frame(Network,Acronym)
+
+current_table_ANOVA <- subset(current_table, select = -c(SUBJ))
+
+current_table_ANOVA$PRS <- factor(current_table_ANOVA$PRS,
+                                  levels=c("LowPRS","HighPRS"),
+                                  labels=c("LowPRS","HighPRS"))
+current_table_ANOVA$MDD <- factor(current_table_ANOVA$MDD,
+                                  levels=c("HC","CD","RD"),
+                                  labels=c("HC","CD","RD"))
+model <- lm(CON ~ PRS * MDD, data=current_table_ANOVA)
+sstable <- anova(model)
+
+library(emmeans)
+library(xlsx)
+library(gplots)
+library(emmeans)
+library(sm)
+library(rstatix)
+library(ggpubr)
+library(dplyr)
+library(caret)
+library("ggpubr")
+
+
+em <- emmeans(model,~ MDD * PRS)
+SE <- summary(em)$SE[1] 
+
+myform_aov <- as.formula(sprintf("%s ~ %s * %s", "CON","PRS", "MDD"))
+res.aov <- get_anova_table(current_table_ANOVA %>% anova_test(myform_aov))
+model <- aov(CON ~ MDD*PRS, data = current_table_ANOVA)
+
+#TTest main effects (MDD)
+HC_all <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="CD"),])
+HC_all <- droplevels( HC_all[-which(HC_all$MDD =="RD"),])
+HC_all <- subset(HC_all, select = -c(MDD))
+
+CD_all <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="HC"),])
+CD_all <- droplevels( CD_all[-which(CD_all$MDD =="RD"),])
+CD_all <- subset(CD_all, select = -c(MDD))
+
+RD_all <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="HC"),])
+RD_all <- droplevels( RD_all[-which(RD_all$MDD =="CD"),])
+RD_all <- subset(RD_all, select = -c(MDD))
+
+#HC vs CD
+ttest_HC_v_CD <- t.test(HC_all$CON, CD_all$CON, var.equal=TRUE)
+ttest_HC_v_CD$statistic <- round(ttest_HC_v_CD$statistic,digits=4)
+ttest_HC_v_CD$p.value <- round(ttest_HC_v_CD$p.value,digits=4)
+
+#HC vs RD
+ttest_HC_v_RD <- t.test(HC_all$CON, RD_all$CON, var.equal=TRUE)
+ttest_HC_v_RD$statistic <- round(ttest_HC_v_RD$statistic,digits=4)
+ttest_HC_v_RD$p.value <- round(ttest_HC_v_RD$p.value,digits=4)
+
+#HC vs RD
+ttest_CD_v_RD <- t.test(CD_all$CON, RD_all$CON, var.equal=TRUE)
+ttest_CD_v_RD$statistic <- round(ttest_CD_v_RD$statistic,digits=4)
+ttest_CD_v_RD$p.value <- round(ttest_CD_v_RD$p.value,digits=4)
+
+#TTest main effects (PRS)
+High_all <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$PRS =="LowPRS"),])
+High_all <- subset(High_all, select = -c(PRS))
+Low_all <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$PRS =="HighPRS"),])
+Low_all <- subset(Low_all, select = -c(PRS))
+
+#High vs Low
+ttest_High_v_Low <- t.test(High_all$CON, Low_all$CON, var.equal=TRUE)
+ttest_High_v_Low$statistic <- round(ttest_High_v_Low$statistic,digits=4)
+ttest_High_v_Low$p.value <- round(ttest_High_v_Low$p.value,digits=4)
+
+#Make
+#Main MDD
+MAIN_TABLE <- matrix(c(ttest_HC_v_CD$statistic, ttest_HC_v_CD$parameter, ttest_HC_v_CD$p.value,
+ttest_HC_v_RD$statistic, ttest_HC_v_RD$parameter, ttest_HC_v_RD$p.value,
+ttest_CD_v_RD$statistic, ttest_CD_v_RD$parameter, ttest_CD_v_RD$p.value,
+ttest_High_v_Low$statistic, ttest_High_v_Low$parameter, ttest_High_v_Low$p.value), ncol=3, byrow=TRUE)
+colnames(MAIN_TABLE) <- c('t','df','p')
+rownames(MAIN_TABLE) <- c('HC v CD','HC v RD','CD v RD','PRS: High v Low')
+MAIN_TABLE <- as.table(MAIN_TABLE)
+
+
+
+#TTEST: SPLIT BY MDD (high v low)
+HC <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="CD"),])
+HC <- droplevels( HC[-which(HC$MDD =="RD"),])
+HC_low <- droplevels( HC[-which(HC$PRS =="HighPRS"),])
+HC_high <- droplevels( HC[-which(HC$PRS =="LowPRS"),])
+
+CD <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="HC"),])
+CD <- droplevels( CD[-which(CD$MDD =="RD"),])
+CD_low <- droplevels( CD[-which(CD$PRS =="HighPRS"),])
+CD_high <- droplevels( CD[-which(CD$PRS =="LowPRS"),])
+
+RD <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="HC"),])
+RD <- droplevels( RD[-which(RD$MDD =="CD"),])
+RD_low <- droplevels( RD[-which(RD$PRS =="HighPRS"),])
+RD_high <- droplevels( RD[-which(RD$PRS =="LowPRS"),])
+
+
+ttest_HC_PRS <- t.test(HC_low$CON, HC_high$CON, var.equal=TRUE)
+ttest_HC_PRS$statistic <- round(ttest_HC_PRS$statistic,digits=4)
+ttest_HC_PRS$p.value <- round(ttest_HC_PRS$p.value,digits=4)
+
+ttest_CD_PRS <- t.test(CD_low$CON, CD_high$CON, var.equal=TRUE)
+ttest_CD_PRS$statistic <- round(ttest_CD_PRS$statistic,digits=4)
+ttest_CD_PRS$p.value <- round(ttest_CD_PRS$p.value,digits=4)
+
+ttest_RD_PRS <- t.test(RD_low$CON, RD_high$CON, var.equal=TRUE)
+ttest_RD_PRS$statistic <- round(ttest_RD_PRS$statistic,digits=4)
+ttest_RD_PRS$p.value <- round(ttest_RD_PRS$p.value,digits=4)
+
+MDD_TABLE <- matrix(c(ttest_HC_PRS$statistic, ttest_HC_PRS$parameter, ttest_HC_PRS$p.value,
+ttest_CD_PRS$statistic, ttest_CD_PRS$parameter, ttest_CD_PRS$p.value,
+ttest_RD_PRS$statistic, ttest_RD_PRS$parameter, ttest_RD_PRS$p.value), ncol=3, byrow=TRUE)
+colnames(MDD_TABLE) <- c('t','df','p')
+rownames(MDD_TABLE) <- c('HC: LowVHigh-PRS','CD: LowVHigh-PRS','RD: LowVHigh-PRS')
+MDD_TABLE <- as.table(MDD_TABLE)
+
+
+#TTEST: SPLIT BY PRS (HC v CD, HC v RD, CD v RD)
+HC <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="CD"),])
+HC <- droplevels( HC[-which(HC$MDD =="RD"),])
+HC_high <- droplevels( HC[-which(HC$PRS =="LowPRS"),])
+HC_low <- droplevels( HC[-which(HC$PRS =="HighPRS"),])
+CD <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="HC"),])
+CD <- droplevels( CD[-which(CD$MDD =="RD"),])
+CD_high <- droplevels( CD[-which(CD$PRS =="LowPRS"),])
+CD_low <- droplevels( CD[-which(CD$PRS =="HighPRS"),])
+RD <- droplevels( current_table_ANOVA[-which(current_table_ANOVA$MDD =="HC"),])
+RD <- droplevels( RD[-which(RD$MDD =="CD"),])
+RD_high <- droplevels( RD[-which(RD$PRS =="LowPRS"),])
+RD_low <- droplevels( RD[-which(RD$PRS =="HighPRS"),])
+
+#HC v CD (high)
+ttest_HC_v_CD_high <- t.test(HC_high$CON, CD_high$CON, var.equal=TRUE)
+ttest_HC_v_CD_high$statistic <- round(ttest_HC_v_CD_high$statistic,digits=4)
+ttest_HC_v_CD_high$p.value <- round(ttest_HC_v_CD_high$p.value,digits=4)
+
+#HC v RD (high)
+ttest_HC_v_RD_high <- t.test(HC_high$CON, RD_high$CON, var.equal=TRUE)
+ttest_HC_v_RD_high$statistic <- round(ttest_HC_v_RD_high$statistic,digits=4)
+ttest_HC_v_RD_high$p.value <- round(ttest_HC_v_RD_high$p.value,digits=4)
+
+#CD v RD (high)
+ttest_CD_v_RD_high <- t.test(CD_high$CON, RD_high$CON, var.equal=TRUE)
+ttest_CD_v_RD_high$statistic <- round(ttest_CD_v_RD_high$statistic,digits=4)
+ttest_CD_v_RD_high$p.value <- round(ttest_CD_v_RD_high$p.value,digits=4)
+
+#HC v CD (low)
+ttest_HC_v_CD_low <- t.test(HC_low$CON, CD_low$CON, var.equal=TRUE)
+ttest_HC_v_CD_low$statistic <- round(ttest_HC_v_CD_low$statistic,digits=4)
+ttest_HC_v_CD_low$p.value <- round(ttest_HC_v_CD_low$p.value,digits=4)
+
+#HC v RD (low)
+ttest_HC_v_RD_low <- t.test(HC_low$CON, RD_low$CON, var.equal=TRUE)
+ttest_HC_v_RD_low$statistic <- round(ttest_HC_v_RD_low$statistic,digits=4)
+ttest_HC_v_RD_low$p.value <- round(ttest_HC_v_RD_low$p.value,digits=4)
+
+#CD v RD (low)
+ttest_CD_v_RD_low <- t.test(CD_low$CON, RD_low$CON, var.equal=TRUE)
+ttest_CD_v_RD_low$statistic <- round(ttest_CD_v_RD_low$statistic,digits=4)
+ttest_CD_v_RD_low$p.value <- round(ttest_CD_v_RD_low$p.value,digits=4)
+
+
+PRS_TABLE <- matrix(c(ttest_HC_v_CD_high$statistic, ttest_HC_v_CD_high$parameter, ttest_HC_v_CD_high$p.value,
+ttest_HC_v_RD_high$statistic, ttest_HC_v_RD_high$parameter, ttest_HC_v_RD_high$p.value,
+ttest_CD_v_RD_high$statistic, ttest_CD_v_RD_high$parameter, ttest_CD_v_RD_high$p.value,
+ttest_HC_v_CD_low$statistic, ttest_HC_v_CD_low$parameter, ttest_HC_v_CD_low$p.value,
+ttest_HC_v_RD_low$statistic, ttest_HC_v_RD_low$parameter, ttest_HC_v_RD_low$p.value,
+ttest_CD_v_RD_low$statistic, ttest_CD_v_RD_low$parameter, ttest_CD_v_RD_low$p.value), ncol=3, byrow=TRUE)
+colnames(PRS_TABLE) <- c('t','df','p')
+rownames(PRS_TABLE) <- c('HighPRS: HCvCD','HighPRS: HCvRD','HighPRS: CDvRD',
+'LowPRS: HCvCD','LowPRS: HCvRD','LowPRS: CDvRD')
+PRS_TABLE <- as.table(PRS_TABLE)
+
+
+
+
+library(gridExtra)
+library(grid)
+library(gtable)
+library(lattice)
+#pdf(file = "q3.pdf")
+#p1 <- ggboxplot(current_table_ANOVA, x = "MDD", y = "CON", color = "PRS",
+#          palette = c("#00AFBB", "#E7B800"),title=paste("MAIN BIG BLOB ",blob_num,stat_name,"node",node,gender,sep=" "))
+
+nw_numbers_as_string <- ass_networks
+nw_numbers_as_string_vector <- strsplit(nw_numbers_as_string, " ")[[1]]
+#number_of_networks <- length(nw_numbers_as_string_vector)
+index_of_network_names <- c()
+for (i in nw_numbers_as_string_vector) {
+nw_number_as_integers <- as.integer(i)
+index_of_network_names <- append(index_of_network_names,nw_number_as_integers)
+}
+
+
+
+
+p1 <- ggbarplot(current_table_ANOVA, x = "MDD", y = "connectivty z-score", color = "PRS",xlab=("Depression Status"),
+ add = "mean_se", palette = c("#00AFBB", "#E7B800"),title=paste("Stringent-Voxel, Lenient-Cluster Finding",blob_num,"in Full Sample", "\n", "Seed network:",a_l[node],"\n","Overlaps with:",paste(a_l[index_of_network_names],collapse=","),"\n","Related Lenient-Voxel, Stringent-Cluster Finding:",rel_big_blob,sep=" "),position = position_dodge())
+
+
+
+#Main anova table
+d <- head(res.aov)
+table <- tableGrob(d)
+h <- grobHeight(table)
+w <- grobWidth(table)
+
+
+title <- textGrob(paste("Stringent-voxel, Lenient-Cluster Finding",blob_num, "in Full Sample, FULL-ANOVA",sep=" "), y=unit(0.6,"npc") + 0.5*h, 
+                  vjust=0, gp=gpar(fontsize=10))
+footnote <- textGrob("ges = generalized eta-squared", 
+                     x=unit(0.5,"npc") - 1.9*w,
+                     y=unit(0.5,"npc") - 0.9*h, 
+                  vjust=1, hjust=0,gp=gpar( fontface="italic"))
+gt <- gTree(children=gList(table, title, footnote))
+
+
+#ttest MAIN
+d <- head(MAIN_TABLE)
+table <- tableGrob(d)
+h <- grobHeight(table)
+w <- grobWidth(table)
+title <- textGrob(paste("Stringent-voxel, Lenient-Cluster Finding",blob_num, "in Full Sample, T-test MAIN EFFECTS",sep=" "), y=unit(0.64,"npc") + 0.5*h, 
+                  vjust=0, gp=gpar(fontsize=10))
+footnote <- textGrob("", 
+                     x=unit(0.5,"npc") - 1.9*w,
+                     y=unit(0.5,"npc") - 0.9*h, 
+                  vjust=1, hjust=0,gp=gpar( fontface="italic"))
+gt_MAIN <- gTree(children=gList(table, title, footnote))
+
+
+
+#ttest MDD split
+d <- head(MDD_TABLE)
+table <- tableGrob(d)
+h <- grobHeight(table)
+w <- grobWidth(table)
+title <- textGrob(paste("Stringent-voxel, Lenient-Cluster Finding",blob_num, "in Full Sample, PRS effects in each Depression Status group",sep=" "), y=unit(0.64,"npc") + 0.5*h, 
+                  vjust=0, gp=gpar(fontsize=10))
+footnote <- textGrob("", 
+                     x=unit(0.5,"npc") - 1.9*w,
+                     y=unit(0.5,"npc") - 0.9*h, 
+                  vjust=1, hjust=0,gp=gpar( fontface="italic"))
+gt_MDD <- gTree(children=gList(table, title, footnote))
+
+
+#ttest PRS split
+d <- head(PRS_TABLE)
+table <- tableGrob(d)
+h <- grobHeight(table)
+w <- grobWidth(table)
+title <- textGrob(paste("Stringent-voxel, Lenient-Cluster Finding",blob_num, "in Full Sample, Depression Status effects in each Polygenic Risk group",sep=" "), y=unit(0.68,"npc") + 0.5*h, 
+                  vjust=0, gp=gpar(fontsize=10))
+footnote <- textGrob("", 
+                     x=unit(0.5,"npc") - 1.9*w,
+                     y=unit(0.5,"npc") - 0.9*h, 
+                  vjust=1, hjust=0,gp=gpar( fontface="italic"))
+gt_PRS <- gTree(children=gList(table, title, footnote))
+
+
+
+
+#PLOT
+grid.arrange(p1, gt,ncol=1)
+grid.arrange(gt_MAIN,gt_MDD,gt_PRS,ncol=1)
+
+#end function
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#main
+#main gender loop
+#library(stringr)
+pdf(file = "Males_Stat_PRS.pdf")
+genders <- list('male') 
+network_list <- list("visual","somatomotor","dorsal attention","ventral attention","limbic","frontoparietal","default mode") 
+acronym_list <- list("VN","SMN","DAN","VAN","LN","FPN","DMN") 
+
+#checking
+stringent_clusters_without_a_big_cluster <- data.frame()
+
+for(g in genders) {
+for(n in 1:7) {
+for(stat in 1:1) {
+
+if (stat==1) {
+stat_name="PRS"
+} else if (stat==2) {
+stat_name="MDD"
+} else if (stat==3) {
+stat_name="interaction"
+}
+
+#checking
+name_of_pot_missed_stringent_cluster <- paste(g,"_","n",n,"_stat",stat,sep="")
+accounted_for_small_blobs <- list()
+
+#How many big blobs?
+filelist_big_blobs<- list.files(path=paste("./for_harley/cluster_averages_big_blob/",sep=""),pattern=paste("clust_table_",g,"_n",n,"_",stat,"_clusternum_","*",sep=""), all.files=FALSE,full.names=FALSE)
+
+if (length(filelist_big_blobs) != 0) {
+num_big_blobs <- length(filelist_big_blobs)
+
+
+
+for (big_blob in 1:num_big_blobs) {
+current_big_blob <- filelist_big_blobs[big_blob]
+#Which network does this blob overlap with?
+big_blob_network_overlap_table <- read.csv(paste("./for_harley/big_blob_network_overlap/clust_table_",g,"_n",n,"_",stat,".txt",sep=""), header = TRUE, sep = ",", dec = ".")
+big_blob_ass_networks <- big_blob_network_overlap_table$OverlapsWith[big_blob]
+if (!is.character(big_blob_ass_networks)) {
+big_blob_ass_networks <- as.character(big_blob_ass_networks)
+}
+
+small_blobs_included_table <- read.csv(paste("./for_harley/blob_controlling/",g,"_n",n,"_stat_",stat,"_con_lib_intersect.txt",sep=""), header = TRUE, sep = ",", dec = ".")
+small_blobs_included_string <- small_blobs_included_table$OverlapsWithSmalBlob[big_blob]
+small_blobs_vector <- scan(text = paste(small_blobs_included_string), what = "")
+small_blobs_vector <- as.numeric(small_blobs_vector)
+number_of_small_blobs_included <- length(small_blobs_vector)
+small_blobs_network_overlap_table <-read.csv(paste("./for_harley/stringent_network_overlap_files/clust_table_",g,"_n",n,"_",stat,".txt",sep=""), header = TRUE, sep = ",", dec = ".")
+
+
+
+run_ANOVA_big_blob(current_big_blob,paste("./for_harley/cluster_averages_big_blob/",sep=""),big_blob,stat,stat_name,g,n,big_blob_ass_networks,small_blobs_included_string,network_list,acronym_list)
+
+#checking
+total_number_of_stringent_clusters <- length(small_blobs_network_overlap_table$Cluster)
+
+
+for (small_blob in 1:number_of_small_blobs_included) {
+which_small_blob <-small_blobs_vector[small_blob]
+current_small_blob <- paste("clust_table_",g,"_n",n,"_",stat,"_clusternum_",which_small_blob,".txt",sep="")
+current_small_blob_ass_network <-small_blobs_network_overlap_table$OverlapsWith[which_small_blob]
+if (!is.character(current_small_blob_ass_network)) {
+current_small_blob_ass_network <- as.character(current_small_blob_ass_network)
+}
+run_ANOVA_small_blob(current_small_blob,paste("./for_harley/cluster_averages_stringent/",sep=""),which_small_blob,stat,stat_name,g,n,current_small_blob_ass_network,big_blob,network_list,acronym_list)
+
+#checking
+accounted_for_small_blobs <- append(accounted_for_small_blobs,as.numeric(which_small_blob))
+
+#end of stringent cluster loop
+}
+
+
+#end blob loop
+}
+
+#checking
+non_accounted_small_blobs = c()
+accounted_for_small_blobs = as.numeric(accounted_for_small_blobs)
+for (check in 1:total_number_of_stringent_clusters) {
+
+if(!(is.element(check, accounted_for_small_blobs))){
+non_accounted_small_blobs <- append(non_accounted_small_blobs,as.numeric(check))
+}
+
+}
+non_accounted_small_blobs <- paste(non_accounted_small_blobs,collapse = " ")
+#non_accounted_small_blobs <- as.numeric(non_accounted_small_blobs)
+temp_df <- data.frame()
+temp_df <- data.frame(
+stringent_mask_to_look_in = name_of_pot_missed_stringent_cluster,
+clustnum_in_mask_report = non_accounted_small_blobs
+)
+
+stringent_clusters_without_a_big_cluster <-  rbind(stringent_clusters_without_a_big_cluster, temp_df)
+#end if filelist
+}
+
+
+
+
+
+
+
+#end of stat loop
+}
+#end of node loop
+}
+#end of gender loop
+}
+write.csv(stringent_clusters_without_a_big_cluster, "./Stringent_Clusters_Without_A_Home.csv", row.names=FALSE,quote=FALSE)
+
+dev.off()
+
+
